@@ -2,6 +2,7 @@
 #coding=utf-8
 
 import os
+import time
 import json
 import urllib
 
@@ -10,10 +11,11 @@ from aliyunsdkcore.acs_exception.exceptions import ClientException
 from aliyunsdkcore.acs_exception.exceptions import ServerException
 from aliyunsdkalidns.request.v20150109 import DescribeSubDomainRecordsRequest, AddDomainRecordRequest, UpdateDomainRecordRequest, DeleteDomainRecordRequest
  
-
+configPath = '/home/user/data/script/aliyunDDNS/ddns_config.json'
+logFilePath = '/home/user/data/script/aliyunDDNS/operation_ddns.log'
   
 # 初始化阿里云配置
-with open('ddns_config.json', 'r', encoding='utf-8') as file:  
+with open(configPath, 'r', encoding='utf-8') as file:  
     envConfig = json.load(file)  
 print(envConfig)  
 
@@ -22,18 +24,22 @@ AccessKey = envConfig['access_key_id']
 Secret = envConfig['access_key_secret']
 RegionId = envConfig['region_id']
 DomainName = envConfig['domain_name']
- 
-# 创建阿里云服务客户端
+
 client = AcsClient(AccessKey, Secret, RegionId)
 
  
 # 子域名列表
 SubDomainList = ['www','@']
  
-# 获取外网IP
-def getPublicIp():
-  ip = json.load(urllib.request.urlopen('https://api.ipify.org/?format=json'))['ip']
-  return ip
+# 获取Ipv4公网地址
+def getIPv4():
+  ipv4 = json.load(urllib.request.urlopen('https://api.ipify.org/?format=json'))['ip']
+  return ipv4
+
+# 获取Ipv6公网地址
+def getIPv6():
+  ipv6 = json.load(urllib.request.urlopen('https://ipv6.lookup.test-ipv6.com'))['ip']
+  return ipv6
  
 # 查询DNS记录
 def getDomainInfo(SubDomain):
@@ -104,35 +110,50 @@ def delDomainRecord(client,subdomain):
  
 # 有记录则更新，没有记录则新增
 def setDomainRecord(client,value,rr,domainname):
+
+  logPrefix = '操作时间：' + time.asctime(time.localtime(time.time())) + '\n'
+  logContent = '操作结果：'
+
   info = getDomainInfo(rr + '.' + domainname)
   if info['TotalCount'] == 0:
     print('准备添加新记录')
     add_result = addDomainRecord(client,value,rr,domainname)
     print(add_result)
+    logContent = logContent + '准备添加新记录 -> ' + add_result
   elif info["TotalCount"] == 1:
     print('准备更新已有记录')
     record_id = info["DomainRecords"]["Record"][0]["RecordId"]
-    cur_ip = getPublicIp()
+    cur_ip = getIPv4()
     old_ip = info["DomainRecords"]["Record"][0]["Value"]
     if cur_ip == old_ip:
       print ("新ip与原ip相同，无法更新！")
+      logContent = logContent + '准备更新已有记录 -> 新ip与原ip相同，无法更新！'
     else:
       update_result = updateDomainRecord(client,value,rr,record_id)
       print('更新成功，返回信息：')
       print(update_result)
+      logContent = logContent + '准备更新已有记录 -> ' + update_result
   else:
     # 正常不应该有多条相同的记录，如果存在这种情况，应该手动去网站检查核实是否有操作失误
     print("存在多个相同子域名解析记录值，请核查删除后再操作！")
- 
+    logContent = logContent + "存在多个相同子域名解析记录值，请核查删除后再操作！"
+
+  return logPrefix + logContent
 
 
 #### 执行相关操作
 
-IP = getPublicIp()
+IPv4 = getIPv4()
  
 # 循环子域名列表进行批量操作
+lines = 'DomainName=' + DomainName
 for subdomain in SubDomainList:
-  setDomainRecord(client,IP,subdomain,DomainName)
+  recordLog = setDomainRecord(client,IPv4,subdomain,DomainName)
+  lines = lines + '\n subdomain=' + subdomain + '\n' + recordLog
+
+# 将操作记录到本地
+with open(logFilePath, 'w', encoding='utf-8') as logFile:
+  logFile.writelines(lines)
  
 # 删除记录测试
 # delDomainRecord(client,subdomain)
@@ -145,4 +166,4 @@ for subdomain in SubDomainList:
 #   print (getDomainInfo(DomainName, x))
  
 # 获取外网ip地址测试
-# print ('(' + getPublicIp() + ')')
+# print ('(' + getIPv4() + ')')
